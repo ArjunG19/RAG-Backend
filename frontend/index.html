@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RAG Knowledge Base</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header>
+    <h1>RAG Knowledge Base</h1>
+    <span id="health-status" aria-live="polite">Checking...</span>
+  </header>
+
+  <main>
+    <section id="document-manager" aria-label="Document management">
+      <h2>Documents</h2>
+
+      <form id="upload-form" aria-label="Upload a document">
+        <label for="file-input">File</label>
+        <input
+          id="file-input"
+          type="file"
+          name="file"
+          accept=".pdf,.txt,.png,.jpeg,.jpg"
+          required
+        >
+
+        <label for="source-input">Source label</label>
+        <input
+          id="source-input"
+          type="text"
+          name="source"
+          placeholder="Source label"
+          required
+        >
+
+        <label for="chunk-size-input">Chunk size</label>
+        <input
+          id="chunk-size-input"
+          type="number"
+          name="chunk_size"
+          value="1000"
+          min="100"
+          max="4000"
+        >
+
+        <label for="chunk-overlap-input">Chunk overlap</label>
+        <input
+          id="chunk-overlap-input"
+          type="number"
+          name="chunk_overlap"
+          value="200"
+          min="0"
+          max="1000"
+        >
+
+        <button type="submit">Upload</button>
+      </form>
+
+      <div id="upload-status" aria-live="polite"></div>
+
+      <div id="document-list">
+        <p class="empty-state">No documents uploaded yet.</p>
+      </div>
+    </section>
+
+    <section id="chat-interface" aria-label="Chat with knowledge base">
+      <h2>Chat</h2>
+      <button id="clear-chat" type="button">Clear Chat</button>
+
+      <div id="message-thread" role="log" aria-live="polite"></div>
+
+      <form id="chat-form" aria-label="Ask a question">
+        <label for="chat-input" class="visually-hidden">Question</label>
+        <input
+          id="chat-input"
+          type="text"
+          name="question"
+          placeholder="Ask a question..."
+          required
+        >
+        <button type="submit">Send</button>
+      </form>
+    </section>
+  </main>
+
+  <script src="app.js" defer></script>
+</body>
+</html>
