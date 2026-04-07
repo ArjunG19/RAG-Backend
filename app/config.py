@@ -20,13 +20,13 @@ class Settings(BaseSettings):
 
     # Embedding model (HuggingFace Inference API)
     embedding_model_name: str = Field(
-        default="sentence-transformers/all-MiniLM-L6-v2",
+        default="sentence-transformers/all-mpnet-base-v2",
         description="HuggingFace model name for embeddings (via Inference API)",
     )
 
     # Groq configuration
     groq_model: str = Field(
-        default="mixtral-8x7b-32768",
+        default="llama-3.3-70b-versatile",
         description="Groq model name for chat generation",
     )
 

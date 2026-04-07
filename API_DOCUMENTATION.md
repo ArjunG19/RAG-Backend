@@ -346,11 +346,12 @@ curl -X POST http://localhost:8000/query \
 |---|---|---|
 | `RAG_PINECONE_API_KEY` | (required) | Pinecone API key |
 | `RAG_PINECONE_INDEX_NAME` | `rag-index` | Pinecone index name |
-| `RAG_EMBEDDING_MODEL_NAME` | `all-MiniLM-L6-v2` | SentenceTransformers model |
-| `RAG_OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server URL |
-| `RAG_OLLAMA_MODEL` | `llama3.2:1b` | Ollama chat model |
+| `RAG_GROQ_API_KEY` | (required) | Groq API key |
+| `RAG_GROQ_MODEL` | `llama-3.3-70b-versatile` | Groq chat model |
+| `RAG_EMBEDDING_MODEL_NAME` | `sentence-transformers/all-mpnet-base-v2` | HuggingFace embedding model |
+| `RAG_HUGGINGFACE_API_KEY` | (required) | HuggingFace API key |
 | `RAG_CONFIDENCE_THRESHOLD` | `0.3` | Min similarity score |
-| `RAG_LLM_TIMEOUT` | `120` | LLM timeout (seconds) |
-| `RAG_MAX_CHAT_HISTORY` | `10` | Max conversation messages in prompt |
+| `RAG_LLM_TIMEOUT` | `300` | LLM timeout (seconds) |
+| `RAG_MAX_CHAT_HISTORY` | `1` | Max conversation messages in prompt |
 | `RAG_MAX_FILE_SIZE` | `52428800` | Max upload size (bytes) |
 | `RAG_DATABASE_URL` | `sqlite:///./rag_documents.db` | SQLite database path |
