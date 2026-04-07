@@ -7,6 +7,8 @@ class Settings(BaseSettings):
 
     # API keys
     pinecone_api_key: str = Field(default="", description="Pinecone API key")
+    groq_api_key: str = Field(default="", description="Groq API key")
+    huggingface_api_key: str = Field(default="", description="HuggingFace API key")
 
     # Pinecone configuration
     pinecone_index_name: str = Field(
@@ -16,20 +18,16 @@ class Settings(BaseSettings):
         default="us-east-1", description="Pinecone environment"
     )
 
-    # Embedding model (SentenceTransformers)
+    # Embedding model (HuggingFace Inference API)
     embedding_model_name: str = Field(
-        default="all-MiniLM-L6-v2",
-        description="SentenceTransformers model name for embeddings",
+        default="sentence-transformers/all-MiniLM-L6-v2",
+        description="HuggingFace model name for embeddings (via Inference API)",
     )
 
-    # Ollama configuration
-    ollama_base_url: str = Field(
-        default="http://localhost:11434",
-        description="Ollama server base URL",
-    )
-    ollama_model: str = Field(
-        default="llama3.2:1b",
-        description="Ollama model name for chat generation",
+    # Groq configuration
+    groq_model: str = Field(
+        default="mixtral-8x7b-32768",
+        description="Groq model name for chat generation",
     )
 
     # Chunking defaults

@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api.routes import router
+from app.api.routes import init_embeddings_cache, router
 from app.config import settings
 from app.services.document_store import DocumentStore
 
@@ -36,11 +36,15 @@ app.include_router(router)
 
 
 @app.on_event("startup")
-async def startup_init_db() -> None:
-    """Initialize the document persistence database on startup."""
+async def startup_init() -> None:
+    """Initialize resources on startup: database and HuggingFace embeddings cache."""
+    # Initialize database
     store = DocumentStore(settings.database_url)
     await store.init_db()
     await store.close()
+    
+    # Initialize embeddings cache (HuggingFace Inference API)
+    await init_embeddings_cache()
 
 
 @app.exception_handler(asyncio.TimeoutError)

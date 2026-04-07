@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 
@@ -26,6 +28,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# Global cache for embeddings model to avoid reloading on every request
+_embeddings_cache: dict[str, Any] = {}
+
 SUPPORTED_CONTENT_TYPES = {
     "application/pdf",
     "text/plain",
@@ -43,23 +48,40 @@ async def get_document_store() -> DocumentStore:
     return DocumentStore(settings.database_url)
 
 
+async def init_embeddings_cache() -> None:
+    """Initialize the HuggingFace Inference API embeddings model cache at startup.
+    
+    Initializes the HuggingFace Inference API embeddings once and stores in cache
+    to avoid reinitialization on every request.
+    """
+    if "embeddings" not in _embeddings_cache:
+        from langchain_huggingface import HuggingFaceEndpointEmbeddings
+        logger.info("Initializing HuggingFace Inference API embeddings: %s", settings.embedding_model_name)
+        embeddings_model = HuggingFaceEndpointEmbeddings(
+            model=settings.embedding_model_name,
+            task="feature-extraction",
+            huggingfacehub_api_token=settings.huggingface_api_key,
+        )
+        _embeddings_cache["embeddings"] = embeddings_model
+        logger.info("HuggingFace Inference API embeddings initialized and cached")
+
+
 async def get_vector_store() -> VectorStoreService:
     """Dependency that provides a VectorStoreService instance.
 
-    Uses SentenceTransformers for local embeddings and Pinecone for storage.
+    Uses HuggingFace Inference API for cloud-based embeddings and Pinecone for storage.
     Overridden in tests via dependency_overrides.
     """
-    from langchain_huggingface import HuggingFaceEmbeddings
     from pinecone import Pinecone
 
     from app.services.embedding_service import EmbeddingService
 
+    if "embeddings" not in _embeddings_cache:
+        await init_embeddings_cache()
+    
     pc = Pinecone(api_key=settings.pinecone_api_key)
     index = pc.Index(settings.pinecone_index_name)
-    embeddings_model = HuggingFaceEmbeddings(
-        model_name=settings.embedding_model_name,
-    )
-    embedding_service = EmbeddingService(model=embeddings_model)
+    embedding_service = EmbeddingService(model=_embeddings_cache["embeddings"])
     return VectorStoreService(index=index, embedding_service=embedding_service)
 
 
@@ -68,14 +90,14 @@ async def get_rag_chain(
 ) -> RAGChain:
     """Dependency that provides a RAGChain instance.
 
-    Uses Ollama for local LLM chat and the injected VectorStoreService.
+    Uses Groq for LLM chat (cloud-based) and the injected VectorStoreService.
     Overridden in tests via dependency_overrides.
     """
-    from langchain_ollama import ChatOllama
+    from langchain_groq import ChatGroq
 
-    llm = ChatOllama(
-        base_url=settings.ollama_base_url,
-        model=settings.ollama_model,
+    llm = ChatGroq(
+        groq_api_key=settings.groq_api_key,
+        model_name=settings.groq_model,
         timeout=settings.llm_timeout,
     )
     return RAGChain(llm=llm, vector_store=vector_store)
