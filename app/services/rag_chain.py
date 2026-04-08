@@ -54,7 +54,7 @@ class RAGChain:
         bm25_store=None,
         confidence_threshold: float | None = None,
         llm_timeout: int | None = None,
-        relevance_threshold: float = 0.3,
+        relevance_threshold: float = 0.4,
     ) -> None:
         self.llm = llm
         self.vector_store = vector_store

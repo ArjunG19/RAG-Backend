@@ -21,8 +21,8 @@ class DocumentUploadRequest(BaseModel):
 
     source: str = Field(..., min_length=1, description="Origin or label for the document")
     file_type: Optional[FileType] = Field(None, description="Explicit file type override")
-    chunk_size: int = Field(default=1000, ge=100, le=4000)
-    chunk_overlap: int = Field(default=200, ge=0, le=1000)
+    chunk_size: int = Field(default=500, ge=50, le=1024)
+    chunk_overlap: int = Field(default=60, ge=0, le=512)
 
     @model_validator(mode="after")
     def check_overlap_less_than_size(self) -> DocumentUploadRequest:

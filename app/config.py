@@ -33,15 +33,15 @@ class Settings(BaseSettings):
 
     # Chunking defaults
     default_chunk_size: int = Field(
-        default=1000, ge=100, le=4000, description="Default chunk size in characters"
+        default=400, ge=50, le=1024, description="Default chunk size in tokens"
     )
     default_chunk_overlap: int = Field(
-        default=200, ge=0, le=1000, description="Default chunk overlap in characters"
+        default=60, ge=0, le=512, description="Default chunk overlap in tokens"
     )
 
     # Confidence threshold
     confidence_threshold: float = Field(
-        default=0.7, ge=0.0, le=1.0, description="Minimum confidence score for answers"
+        default=0.4, ge=0.0, le=1.0, description="Minimum confidence score for answers"
     )
 
     # LLM timeout

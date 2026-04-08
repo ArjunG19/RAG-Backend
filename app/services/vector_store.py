@@ -14,11 +14,56 @@ MAX_RETRIES = 3
 BACKOFF_DELAYS = [1, 2, 4]
 
 # Hybrid scoring constants
-VECTOR_WEIGHT = 0.7
-BM25_WEIGHT = 0.3
+VECTOR_WEIGHT = 0.8
+BM25_WEIGHT = 0.2
 BM25_ONLY_CAP = 0.3
 SIGMOID_K = 1.0
 SIGMOID_MIDPOINT = 3.0
+
+# Common English stopwords for BM25 query filtering.
+# These are high-frequency words that carry little lexical signal for BM25
+# but are still useful for dense/semantic retrieval, so they are only
+# stripped from the BM25 query, not from the vector query.
+STOPWORDS: frozenset[str] = frozenset({
+    "a", "an", "the",
+    "and", "or", "but", "nor", "so", "yet", "for",
+    "in", "on", "at", "to", "of", "by", "up", "as",
+    "is", "are", "was", "were", "be", "been", "being",
+    "have", "has", "had", "do", "does", "did",
+    "will", "would", "shall", "should", "may", "might",
+    "must", "can", "could",
+    "i", "me", "my", "we", "our", "you", "your",
+    "he", "him", "his", "she", "her", "they", "them", "their",
+    "it", "its", "this", "that", "these", "those",
+    "what", "which", "who", "whom", "whose",
+    "how", "when", "where", "why",
+    "not", "no", "nor", "only", "own", "same",
+    "than", "then", "there", "here",
+    "if", "else", "with", "about", "against", "between",
+    "into", "through", "during", "before", "after",
+    "from", "out", "off", "over", "under", "again",
+    "further", "once", "all", "any", "both", "each",
+    "few", "more", "most", "other", "some", "such",
+})
+
+
+def _filter_stopwords(query: str) -> str:
+    """Remove stopwords from *query* for BM25 retrieval.
+
+    Tokens are split on whitespace and punctuation is preserved as part of
+    each token (BM25 tokenisation typically handles punctuation itself).
+    If filtering would leave the query empty, the original query is returned
+    unchanged so BM25 still has something to work with.
+    """
+    tokens = query.split()
+    filtered = [t for t in tokens if t.lower().rstrip(".,!?;:") not in STOPWORDS]
+    if not filtered:
+        logger.debug("Stopword filtering removed all tokens; using original query for BM25.")
+        return query
+    filtered_query = " ".join(filtered)
+    if filtered_query != query:
+        logger.debug("BM25 query after stopword filtering: %r → %r", query, filtered_query)
+    return filtered_query
 
 
 class VectorStoreService:
@@ -83,9 +128,13 @@ class VectorStoreService:
         response = await self._query_with_retry(**query_kwargs)
 
         # ---------- BM25 Retrieval (single call) ----------
+        # Stopwords are stripped from the BM25 query only; the original query
+        # is intentionally kept intact for the dense embedding call above so
+        # that semantic context (e.g. "not", "without") is preserved.
         bm25_raw_results = []
         if bm25_store:
-            bm25_raw_results = bm25_store.search(query, top_k=candidate_limit)
+            bm25_query = _filter_stopwords(query)
+            bm25_raw_results = bm25_store.search(bm25_query, top_k=candidate_limit)
 
         # ---------- Collect candidates ----------
         # Vector candidates (keep original scores)
