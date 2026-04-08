@@ -1,6 +1,6 @@
 /* RAG Knowledge Base — Frontend Application Logic */
 
-const API_BASE = "http://localhost:8000";
+const API_BASE = "https://rag-backend-n1as.onrender.com";
 const messageHistory = [];
 
 /* ===== Initialization ===== */
