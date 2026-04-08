@@ -4,29 +4,20 @@ from __future__ import annotations
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from app.config import settings
 from app.models.internal import TextChunk
 
 
 class TextChunker:
-    """Split raw text into overlapping token-based chunks.
-
-    Chunk size and overlap are measured in tokens (via tiktoken) rather than
-    characters, so limits align with the embedding model's context window and
-    BM25 term frequencies stay consistent across chunks of varying word length.
+    """Split raw text into overlapping chunks with configurable size and overlap.
 
     Each chunk carries propagated source metadata and an ascending chunk_index.
     """
 
-    def __init__(
-        self,
-        chunk_size: int = settings.default_chunk_size,
-        chunk_overlap: int = settings.default_chunk_overlap,
-    ) -> None:
-        self.splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
-            model_name=settings.embedding_model_name,
+    def __init__(self, chunk_size: int = 1000, chunk_overlap: int = 200) -> None:
+        self.splitter = RecursiveCharacterTextSplitter(
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
+            length_function=len,
             separators=["\n\n", "\n", ". ", " ", ""],
         )
 
