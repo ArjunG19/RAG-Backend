@@ -132,6 +132,13 @@ async def connection_error_handler(
         status_code=503,
         content={"detail": "Vector store temporarily unavailable"},
     )
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.exception("🔥 UNHANDLED ERROR:")
+    return JSONResponse(
+        status_code=500,
+        content={"detail": str(exc)},  # temporary for debugging
+    )
 
 # Mount frontend static files AFTER API routes so API takes priority
 app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
