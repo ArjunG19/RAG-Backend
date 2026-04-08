@@ -1,5 +1,3 @@
-"""RAG chain service for orchestrating retrieval-augmented generation."""
-
 from __future__ import annotations
 
 import asyncio
@@ -33,24 +31,34 @@ HISTORY_TEMPLATE = """--- CONVERSATION HISTORY ---
 
 """
 
+FALLBACK_PROMPT_TEMPLATE = """You are a helpful assistant. The user asked a question, but no relevant documents were found in the knowledge base.
+
+You may ONLY answer if the question is a general conceptual question that you can answer confidently from general knowledge (e.g., "what is AI?", "explain machine learning").
+
+You MUST NOT:
+- Fabricate specific facts, statistics, dates, or numbers
+- Invent domain-specific data, proprietary information, or organizational details
+- Guess at answers that require specific factual information
+
+If the question requires specific factual information that you cannot answer confidently from general knowledge alone, respond with exactly: CANNOT_ANSWER
+
+Question: {question}
+"""
+
 
 class RAGChain:
-    """Orchestrates the RAG pipeline: retrieve, confidence check, generate, parse.
-
-    Retrieves relevant context from the vector store, checks confidence,
-    formats a prompt, generates an answer via LLM, and returns a structured
-    QueryResponse with source references.
-    """
-
     def __init__(
         self,
         llm: BaseChatModel,
         vector_store: VectorStoreService,
+        bm25_store=None,
         confidence_threshold: float | None = None,
         llm_timeout: int | None = None,
+        relevance_threshold: float = 0.3,
     ) -> None:
         self.llm = llm
         self.vector_store = vector_store
+        self.bm25_store = bm25_store
         self.confidence_threshold = (
             confidence_threshold
             if confidence_threshold is not None
@@ -59,35 +67,26 @@ class RAGChain:
         self.llm_timeout = (
             llm_timeout if llm_timeout is not None else settings.llm_timeout
         )
+        self.relevance_threshold = relevance_threshold
 
     async def query(
         self,
         question: str,
-        top_k: int = 5,
+        top_k: int = 10,
         filter: Optional[dict[str, Any]] = None,
         chat_history: Optional[list] = None,
     ) -> QueryResponse:
-        """Run the full RAG pipeline: retrieve → confidence check → generate → parse.
 
-        Args:
-            question: The user's question.
-            top_k: Maximum number of retrieval results.
-            filter: Optional Pinecone metadata filter.
-            chat_history: Optional list of recent ChatMessage dicts for conversation context.
-
-        Returns:
-            A QueryResponse with answer, sources, confidence, and optional message.
-        """
-        # Step 1: Retrieve relevant context
+        # 🔥 Hybrid retrieval
         results = await self.vector_store.similarity_search(
             query=question,
             top_k=top_k,
             filter=filter,
+            bm25_store=self.bm25_store,
         )
 
-        # Step 2: Confidence gate — no results
         if not results:
-            msg = "No relevant documents found for your question."
+            msg = "No relevant documents found."
             return QueryResponse(
                 answer=msg,
                 sources=[],
@@ -95,42 +94,76 @@ class RAGChain:
                 message=msg,
             )
 
-        # Confidence is the max similarity score
-        confidence = max(r.score for r in results)
+        # 🔥 Filter by relevance threshold before LLM
+        relevant_results = [r for r in results if r.score >= self.relevance_threshold]
 
-        # Step 3: Confidence gate — all scores below threshold
-        if confidence < self.confidence_threshold:
-            msg = "Retrieved documents did not meet the confidence threshold."
+        if not relevant_results:
+            # Post-retrieval fallback: call LLM with restricted prompt
+            fallback_prompt = FALLBACK_PROMPT_TEMPLATE.format(question=question)
+            try:
+                fallback_answer = await asyncio.wait_for(
+                    self.llm.ainvoke(fallback_prompt),
+                    timeout=self.llm_timeout,
+                )
+                fallback_text = fallback_answer.content if hasattr(fallback_answer, "content") else str(fallback_answer)
+            except (asyncio.TimeoutError, TimeoutError):
+                return QueryResponse(
+                    answer=None,
+                    sources=[],
+                    confidence=0.0,
+                    message="LLM timed out",
+                )
+
+            if "CANNOT_ANSWER" in fallback_text:
+                return QueryResponse(
+                    answer="I'm sorry, I don't have enough information to answer that question.",
+                    sources=[],
+                    confidence=0.0,
+                    message="The system could not find relevant documents and cannot answer this question from general knowledge.",
+                )
+
             return QueryResponse(
-                answer=msg,
-                sources=self._build_sources(results),
+                answer=fallback_text,
+                sources=[],
                 confidence=0.0,
-                message=msg,
+                message="This answer is based on general knowledge and is not grounded in the knowledge base.",
             )
 
-        # Step 4: Format prompt with context and optional chat history
-        relevant_results = [r for r in results if r.score >= self.confidence_threshold]
+        # 🔥 Better confidence (avg of top 3 relevant results)
+        top_scores = [r.score for r in relevant_results[:3]]
+        confidence = sum(top_scores) / len(top_scores)
+
+        # 🔥 Use only relevant results for context
         relevant_sorted = sorted(relevant_results, key=lambda r: r.score, reverse=True)
+
         context_parts = []
         for r in relevant_sorted:
             context_parts.append(
                 f"[Source: {r.metadata.get('source', '')}, Score: {r.score:.2f}]\n{r.text}"
             )
+
         context = "\n\n---\n\n".join(context_parts)
 
-        # Build conversation history section
+        # Chat history
         history_section = ""
         if chat_history:
             max_history = settings.max_chat_history
-            recent = chat_history[-max_history:] if len(chat_history) > max_history else chat_history
+            recent = chat_history[-max_history:]
+
             history_lines = []
             for msg in recent:
-                role = msg.role if hasattr(msg, "role") else msg.get("role", "")
-                content = msg.content if hasattr(msg, "content") else msg.get("content", "")
+                if hasattr(msg, "role"):
+                    role = msg.role
+                    content = msg.content
+                else:
+                    role = msg.get("role", "")
+                    content = msg.get("content", "")
                 label = "User" if role == "user" else "Assistant"
                 history_lines.append(f"{label}: {content}")
-            if history_lines:
-                history_section = HISTORY_TEMPLATE.format(history="\n".join(history_lines))
+
+            history_section = HISTORY_TEMPLATE.format(
+                history="\n".join(history_lines)
+            )
 
         formatted_prompt = RAG_PROMPT_TEMPLATE.format(
             context=context,
@@ -138,23 +171,21 @@ class RAGChain:
             history_section=history_section,
         )
 
-        # Step 5: Generate answer via LLM (with timeout)
         try:
             answer = await asyncio.wait_for(
                 self.llm.ainvoke(formatted_prompt),
                 timeout=self.llm_timeout,
             )
             answer_text = answer.content if hasattr(answer, "content") else str(answer)
+
         except (asyncio.TimeoutError, TimeoutError):
-            logger.warning("LLM generation timed out after %ds", self.llm_timeout)
             return QueryResponse(
                 answer=None,
                 sources=self._build_sources(results),
                 confidence=confidence,
-                message="Answer generation timed out. Sources are provided for reference.",
+                message="LLM timed out",
             )
 
-        # Step 6: Build response
         return QueryResponse(
             answer=answer_text,
             sources=self._build_sources(results),
@@ -162,21 +193,16 @@ class RAGChain:
         )
 
     def _build_sources(self, results: list) -> list[Source]:
-        """Build source references ordered by descending score.
-
-        Args:
-            results: List of RetrievalResult from the vector store.
-
-        Returns:
-            List of Source objects ordered by descending score.
-        """
         sorted_results = sorted(results, key=lambda r: r.score, reverse=True)
+
         return [
             Source(
                 document_id=r.metadata.get("document_id", ""),
                 source=r.metadata.get("source", ""),
                 chunk_index=r.metadata.get("chunk_index", 0),
                 score=r.score,
+                vec_score=r.vec_score,
+                bm25_score=r.bm25_score,
                 text_snippet=r.text[:200],
             )
             for r in sorted_results

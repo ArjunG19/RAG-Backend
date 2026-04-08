@@ -19,6 +19,7 @@ from app.models.schemas import (
     QueryRequest,
     QueryResponse,
 )
+from app.services.bm25_store import BM25Store
 from app.services.document_store import DocumentStore
 from app.services.ingestion_service import ingest_document
 from app.services.rag_chain import RAGChain
@@ -28,8 +29,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Global cache for embeddings model to avoid reloading on every request
+# Singletons initialised at startup
 _embeddings_cache: dict[str, Any] = {}
+_bm25_cache: dict[str, BM25Store] = {}
 
 SUPPORTED_CONTENT_TYPES = {
     "application/pdf",
@@ -39,46 +41,54 @@ SUPPORTED_CONTENT_TYPES = {
 }
 
 
-async def get_document_store() -> DocumentStore:
-    """Dependency that provides a DocumentStore instance.
+# ------------------------------------------------------------------
+# Dependency providers
+# ------------------------------------------------------------------
 
-    Uses the database_url from application settings.
-    Overridden in tests via dependency_overrides.
-    """
+async def get_document_store() -> DocumentStore:
+    """Dependency that provides a DocumentStore instance."""
     return DocumentStore(settings.database_url)
 
 
 async def init_embeddings_cache() -> None:
-    """Initialize the HuggingFace Inference API embeddings model cache at startup.
-    
-    Initializes the HuggingFace Inference API embeddings once and stores in cache
-    to avoid reinitialization on every request.
-    """
+    """Initialise the OpenAI embeddings model once and cache it."""
     if "embeddings" not in _embeddings_cache:
-        from langchain_huggingface import HuggingFaceEndpointEmbeddings
-        logger.info("Initializing HuggingFace Inference API embeddings: %s", settings.embedding_model_name)
-        embeddings_model = HuggingFaceEndpointEmbeddings(
+        from langchain_openai import OpenAIEmbeddings
+        logger.info("Initializing OpenAI embeddings: %s", settings.embedding_model_name)
+        embeddings_model = OpenAIEmbeddings(
             model=settings.embedding_model_name,
-            task="feature-extraction",
-            huggingfacehub_api_token=settings.huggingface_api_key,
+            openai_api_key=settings.openai_api_key,
         )
         _embeddings_cache["embeddings"] = embeddings_model
-        logger.info("HuggingFace Inference API embeddings initialized and cached")
+        logger.info("OpenAI embeddings initialized and cached")
+
+
+async def init_bm25_cache() -> None:
+    """Create the BM25Store singleton.
+
+    The index is empty here; main.py calls rebuild_from_db after this.
+    """
+    if "bm25" not in _bm25_cache:
+        _bm25_cache["bm25"] = BM25Store()
+        logger.info("BM25Store singleton created")
+
+
+async def get_bm25_store() -> BM25Store:
+    """Dependency: return the singleton BM25Store."""
+    if "bm25" not in _bm25_cache:
+        _bm25_cache["bm25"] = BM25Store()
+        logger.warning("BM25Store created on-demand (was not pre-initialised)")
+    return _bm25_cache["bm25"]
 
 
 async def get_vector_store() -> VectorStoreService:
-    """Dependency that provides a VectorStoreService instance.
-
-    Uses HuggingFace Inference API for cloud-based embeddings and Pinecone for storage.
-    Overridden in tests via dependency_overrides.
-    """
+    """Dependency: return a VectorStoreService backed by Pinecone."""
     from pinecone import Pinecone
-
     from app.services.embedding_service import EmbeddingService
 
     if "embeddings" not in _embeddings_cache:
         await init_embeddings_cache()
-    
+
     pc = Pinecone(api_key=settings.pinecone_api_key)
     index = pc.Index(settings.pinecone_index_name)
     embedding_service = EmbeddingService(model=_embeddings_cache["embeddings"])
@@ -87,12 +97,9 @@ async def get_vector_store() -> VectorStoreService:
 
 async def get_rag_chain(
     vector_store: VectorStoreService = Depends(get_vector_store),
+    bm25_store: BM25Store = Depends(get_bm25_store),
 ) -> RAGChain:
-    """Dependency that provides a RAGChain instance.
-
-    Uses Groq for LLM chat (cloud-based) and the injected VectorStoreService.
-    Overridden in tests via dependency_overrides.
-    """
+    """Dependency: return a RAGChain with hybrid retrieval."""
     from langchain_groq import ChatGroq
 
     llm = ChatGroq(
@@ -100,8 +107,17 @@ async def get_rag_chain(
         model_name=settings.groq_model,
         timeout=settings.llm_timeout,
     )
-    return RAGChain(llm=llm, vector_store=vector_store)
+    return RAGChain(
+        llm=llm,
+        vector_store=vector_store,
+        bm25_store=bm25_store,
+        relevance_threshold=0.4,
+    )
 
+
+# ------------------------------------------------------------------
+# Routes
+# ------------------------------------------------------------------
 
 @router.post("/documents/upload", response_model=DocumentUploadResponse)
 async def upload_document(
@@ -111,13 +127,9 @@ async def upload_document(
     chunk_overlap: int = Form(default=200),
     vector_store: VectorStoreService = Depends(get_vector_store),
     document_store: DocumentStore = Depends(get_document_store),
+    bm25_store: BM25Store = Depends(get_bm25_store),
 ) -> DocumentUploadResponse:
-    """Upload a document for ingestion into the knowledge base.
-
-    Accepts a multipart file upload with metadata form fields. Validates
-    file content type and size, then delegates to the ingestion service.
-    """
-    # Validate content type
+    """Upload a document and ingest it into both Pinecone and BM25 indexes."""
     content_type = file.content_type or ""
     if content_type not in SUPPORTED_CONTENT_TYPES:
         raise HTTPException(
@@ -125,7 +137,6 @@ async def upload_document(
             detail=f"Unsupported file type: {content_type}. Supported: pdf, text, png, jpeg",
         )
 
-    # Read file bytes and validate size
     file_bytes = await file.read()
     if len(file_bytes) > settings.max_file_size:
         raise HTTPException(
@@ -133,7 +144,6 @@ async def upload_document(
             detail=f"File size exceeds maximum allowed size of {settings.max_file_size} bytes",
         )
 
-    # Build the upload request from form fields
     try:
         upload_request = DocumentUploadRequest(
             source=source,
@@ -143,7 +153,6 @@ async def upload_document(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
-    # Delegate to ingestion service
     try:
         return await ingest_document(
             file_bytes=file_bytes,
@@ -152,6 +161,7 @@ async def upload_document(
             upload_request=upload_request,
             vector_store=vector_store,
             document_store=document_store,
+            bm25_store=bm25_store,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
@@ -162,12 +172,8 @@ async def query_documents(
     request: QueryRequest,
     rag_chain: RAGChain = Depends(get_rag_chain),
 ) -> QueryResponse:
-    """Query the knowledge base using the RAG pipeline.
-
-    Accepts a JSON QueryRequest body, runs the full RAG pipeline
-    (retrieve → confidence check → generate → parse), and returns
-    a structured QueryResponse.
-    """
+    """Query the knowledge base using the hybrid RAG pipeline."""
+    logger.debug("query_documents received request with top_k=%s", request.top_k)
     return await rag_chain.query(
         question=request.question,
         top_k=request.top_k,
@@ -240,22 +246,27 @@ async def delete_document(
     document_id: str,
     document_store: DocumentStore = Depends(get_document_store),
     vector_store: VectorStoreService = Depends(get_vector_store),
+    bm25_store: BM25Store = Depends(get_bm25_store),
 ) -> dict:
-    """Delete a document and its associated vectors."""
+    """Delete a document from SQLite, Pinecone, and the BM25 index."""
     record = await document_store.get(document_id)
     if record is None:
         raise HTTPException(status_code=404, detail="Document not found")
 
+    # 1. Delete document row (CASCADE deletes bm25_chunks rows too)
     await document_store.delete(document_id)
 
+    # 2. Remove from live BM25 in-memory index
+    removed = bm25_store.remove_document(document_id)
+    logger.info("BM25Store: removed %d chunks for document %s", removed, document_id)
+
+    # 3. Delete vectors from Pinecone
     try:
         await vector_store.delete_by_document_id(document_id)
     except Exception:
-        logger.exception(
-            "Vector deletion failed for document %s", document_id
-        )
+        logger.exception("Vector deletion failed for document %s", document_id)
         return {
-            "message": "Document record deleted but vector cleanup failed",
+            "message": "Document record and BM25 index deleted but vector cleanup failed",
             "document_id": document_id,
         }
 
@@ -265,4 +276,8 @@ async def delete_document(
 @router.get("/health")
 async def health_check() -> dict:
     """Return the operational status of the service."""
-    return {"status": "healthy"}
+    bm25_store = _bm25_cache.get("bm25")
+    return {
+        "status": "healthy",
+        "bm25_chunks": bm25_store.chunk_count if bm25_store else 0,
+    }

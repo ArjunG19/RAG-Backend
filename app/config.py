@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     pinecone_api_key: str = Field(default="", description="Pinecone API key")
     groq_api_key: str = Field(default="", description="Groq API key")
     huggingface_api_key: str = Field(default="", description="HuggingFace API key")
+    openai_api_key: str = Field(default="", description="OpenAI API key")
 
     # Pinecone configuration
     pinecone_index_name: str = Field(
@@ -18,10 +19,10 @@ class Settings(BaseSettings):
         default="us-east-1", description="Pinecone environment"
     )
 
-    # Embedding model (HuggingFace Inference API)
+    # Embedding model (OpenAI)
     embedding_model_name: str = Field(
-        default="sentence-transformers/all-mpnet-base-v2",
-        description="HuggingFace model name for embeddings (via Inference API)",
+        default="text-embedding-3-small",
+        description="OpenAI model name for embeddings",
     )
 
     # Groq configuration

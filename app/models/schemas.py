@@ -44,7 +44,7 @@ class QueryRequest(BaseModel):
     """Request body for the /query endpoint."""
 
     question: str = Field(..., min_length=1, max_length=2000)
-    top_k: int = Field(default=5, ge=1, le=20)
+    top_k: int = Field(default=10, ge=1, le=20)
     filter: Optional[Dict] = Field(default=None, description="Pinecone metadata filter")
     chat_history: Optional[List["ChatMessage"]] = Field(
         default=None,
@@ -66,6 +66,8 @@ class Source(BaseModel):
     source: str
     chunk_index: int
     score: float
+    vec_score: float = 0.0
+    bm25_score: float = 0.0
     text_snippet: str
 
 

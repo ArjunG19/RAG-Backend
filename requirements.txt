@@ -2,6 +2,7 @@ fastapi>=0.100
 uvicorn>=0.24
 langchain>=0.1
 langchain-huggingface>=0.1
+langchain-openai>=0.1
 langchain-groq>=0.1
 langchain-text-splitters>=0.2
 numpy>=2.0
@@ -17,3 +18,4 @@ hypothesis>=6.0
 pytest>=7.0
 pytest-asyncio>=0.21
 aiosqlite>=0.19
+rank_bm25

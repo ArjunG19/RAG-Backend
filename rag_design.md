@@ -25,7 +25,7 @@ File Upload → Parse → Chunk → Embed → Store
 ```
 - **Parse** — extract text from PDF, TXT, or Image (OCR)
 - **Chunk** — split into ~1000-char overlapping pieces
-- **Embed** — convert each chunk to a vector (384 dimensions)
+- **Embed** — convert each chunk to a vector (1536 dimensions)
 - **Store** — vectors → Pinecone, file metadata → SQLite
 
 ### 2. Query (Retrieval + Generation)

@@ -26,13 +26,20 @@ class RetrievalResult:
 
     Attributes:
         text: The retrieved chunk text.
-        score: Similarity score from the vector search.
+        score: Combined hybrid score using conditional weighting:
+            if bm25_norm > 0: score = 0.7 * vec_score + 0.3 * bm25_norm
+            if bm25_norm == 0: score = vec_score (no penalty for absent BM25).
+            BM25-only candidates (vec_score == 0) are capped at 0.3.
         metadata: Dictionary containing document_id, source, and chunk_index.
+        vec_score: Individual vector/embedding similarity score (0-1).
+        bm25_score: Sigmoid-normalized BM25 keyword match score (0-1).
     """
 
     text: str
     score: float
     metadata: dict
+    vec_score: float = 0.0
+    bm25_score: float = 0.0
 
 
 @dataclass

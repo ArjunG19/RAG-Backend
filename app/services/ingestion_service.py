@@ -23,13 +23,14 @@ async def ingest_document(
     upload_request: DocumentUploadRequest,
     vector_store: VectorStoreService,
     document_store: DocumentStore,
+    bm25_store=None,
 ) -> DocumentUploadResponse:
     """Ingest a document: parse, chunk, embed, and store in the vector database.
 
     Generates a unique document_id, persists the document record to SQLite,
     extracts text via the appropriate parser, splits into chunks, and upserts
-    embeddings to Pinecone. If upsert fails after partial storage, cleans up
-    vectors to ensure atomicity.
+    embeddings to Pinecone. BM25 chunks are saved to SQLite so the keyword
+    index survives server restarts.
 
     Args:
         file_bytes: Raw bytes of the uploaded file.
@@ -38,6 +39,7 @@ async def ingest_document(
         upload_request: Validated upload metadata (source, chunk_size, chunk_overlap).
         vector_store: VectorStoreService instance for embedding and storage.
         document_store: DocumentStore instance for SQLite persistence.
+        bm25_store: Optional BM25Store instance for keyword-based retrieval.
 
     Returns:
         DocumentUploadResponse with document_id, filename, and chunk_count.
@@ -75,21 +77,42 @@ async def ingest_document(
     metadata = {"document_id": document_id, "source": upload_request.source}
     chunks = chunker.chunk(raw_text, metadata)
 
-    # Embed and upsert; roll back on failure for atomicity
+    # Embed and upsert to Pinecone; roll back on failure for atomicity
     try:
         stored_count = await vector_store.upsert_chunks(chunks, document_id)
     except Exception:
-        logger.exception(
-            "Upsert failed for document %s – cleaning up partial vectors",
-            document_id,
-        )
         try:
             await vector_store.delete_by_document_id(document_id)
         except Exception:
-            logger.exception(
-                "Cleanup also failed for document %s", document_id
-            )
+            logger.exception("Vector cleanup also failed for document %s", document_id)
         raise
+
+    # ------------------------------------------------------------------
+    # BM25: persist chunks to SQLite THEN update in-memory index
+    # This order ensures the data is durable before we touch the index.
+    # ------------------------------------------------------------------
+    if bm25_store is not None:
+        try:
+            # 1. Persist to SQLite so chunks survive a restart
+            await document_store.save_bm25_chunks(chunks)
+            logger.info(
+                "Saved %d BM25 chunks to SQLite for document %s",
+                len(chunks),
+                document_id,
+            )
+
+            # 2. Update the live in-memory index
+            bm25_store.add_documents(chunks)
+            logger.info(
+                "BM25 in-memory index now has %d chunks total",
+                bm25_store.chunk_count,
+            )
+        except Exception:
+            logger.exception(
+                "BM25 indexing failed for document %s — vector index is intact",
+                document_id,
+            )
+            # Non-fatal: vector search still works without BM25
 
     # Update the persisted record with the actual chunk count
     await document_store.update_chunk_count(document_id, stored_count)

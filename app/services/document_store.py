@@ -6,7 +6,7 @@ import aiosqlite
 
 from app.models.internal import DocumentRecord
 
-_CREATE_TABLE_SQL = """
+_CREATE_DOCUMENTS_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS documents (
     id TEXT PRIMARY KEY,
     filename TEXT NOT NULL,
@@ -17,6 +17,22 @@ CREATE TABLE IF NOT EXISTS documents (
     file_data BLOB NOT NULL,
     uploaded_at TEXT NOT NULL
 )
+"""
+
+_CREATE_BM25_CHUNKS_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS bm25_chunks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id TEXT NOT NULL,
+    chunk_index INTEGER NOT NULL,
+    source TEXT NOT NULL,
+    text TEXT NOT NULL,
+    FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
+)
+"""
+
+_CREATE_BM25_INDEX_SQL = """
+CREATE INDEX IF NOT EXISTS idx_bm25_chunks_document_id
+ON bm25_chunks (document_id)
 """
 
 
@@ -41,12 +57,16 @@ class DocumentStore:
         if self._connection is None:
             self._connection = await aiosqlite.connect(self._db_path)
             self._connection.row_factory = aiosqlite.Row
+            # Enable foreign key enforcement
+            await self._connection.execute("PRAGMA foreign_keys = ON")
         return self._connection
 
     async def init_db(self) -> None:
-        """Create the documents table if it does not already exist."""
+        """Create tables if they do not already exist."""
         db = await self._get_connection()
-        await db.execute(_CREATE_TABLE_SQL)
+        await db.execute(_CREATE_DOCUMENTS_TABLE_SQL)
+        await db.execute(_CREATE_BM25_CHUNKS_TABLE_SQL)
+        await db.execute(_CREATE_BM25_INDEX_SQL)
         await db.commit()
 
     async def save(self, record: DocumentRecord) -> None:
@@ -118,7 +138,7 @@ class DocumentStore:
         ]
 
     async def delete(self, document_id: str) -> bool:
-        """Delete a document by ID. Returns True if a row was removed."""
+        """Delete a document and its BM25 chunks by ID (CASCADE handles chunks)."""
         db = await self._get_connection()
         cursor = await db.execute(
             "DELETE FROM documents WHERE id = ?",
@@ -135,6 +155,71 @@ class DocumentStore:
             (chunk_count, document_id),
         )
         await db.commit()
+
+    # ------------------------------------------------------------------
+    # BM25 chunk persistence
+    # ------------------------------------------------------------------
+
+    async def save_bm25_chunks(self, chunks: list) -> None:
+        """Persist text chunks for BM25 index rebuilding on startup.
+
+        Args:
+            chunks: List of TextChunk objects with .text, .chunk_index,
+                    and .metadata dict containing 'document_id' and 'source'.
+        """
+        db = await self._get_connection()
+        rows = [
+            (
+                chunk.metadata.get("document_id", ""),
+                chunk.chunk_index,
+                chunk.metadata.get("source", ""),
+                chunk.text,
+            )
+            for chunk in chunks
+        ]
+        await db.executemany(
+            "INSERT INTO bm25_chunks (document_id, chunk_index, source, text) "
+            "VALUES (?, ?, ?, ?)",
+            rows,
+        )
+        await db.commit()
+
+    async def load_all_bm25_chunks(self) -> list[dict]:
+        """Load all BM25 chunks ordered by document and chunk index.
+
+        Returns:
+            List of dicts with keys: document_id, chunk_index, source, text.
+        """
+        db = await self._get_connection()
+        cursor = await db.execute(
+            "SELECT document_id, chunk_index, source, text "
+            "FROM bm25_chunks "
+            "ORDER BY document_id, chunk_index"
+        )
+        rows = await cursor.fetchall()
+        return [
+            {
+                "document_id": row["document_id"],
+                "chunk_index": row["chunk_index"],
+                "source": row["source"],
+                "text": row["text"],
+            }
+            for row in rows
+        ]
+
+    async def delete_bm25_chunks_by_document(self, document_id: str) -> int:
+        """Delete all BM25 chunks for a given document.
+
+        Returns:
+            Number of rows deleted.
+        """
+        db = await self._get_connection()
+        cursor = await db.execute(
+            "DELETE FROM bm25_chunks WHERE document_id = ?",
+            (document_id,),
+        )
+        await db.commit()
+        return cursor.rowcount
 
     async def close(self) -> None:
         """Close the underlying database connection."""

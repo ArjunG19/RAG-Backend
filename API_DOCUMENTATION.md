@@ -348,8 +348,8 @@ curl -X POST http://localhost:8000/query \
 | `RAG_PINECONE_INDEX_NAME` | `rag-index` | Pinecone index name |
 | `RAG_GROQ_API_KEY` | (required) | Groq API key |
 | `RAG_GROQ_MODEL` | `llama-3.3-70b-versatile` | Groq chat model |
-| `RAG_EMBEDDING_MODEL_NAME` | `sentence-transformers/all-mpnet-base-v2` | HuggingFace embedding model |
-| `RAG_HUGGINGFACE_API_KEY` | (required) | HuggingFace API key |
+| `RAG_EMBEDDING_MODEL_NAME` | `text-embedding-3-small` | OpenAI embedding model |
+| `RAG_OPENAI_API_KEY` | (required) | OpenAI API key |
 | `RAG_CONFIDENCE_THRESHOLD` | `0.3` | Min similarity score |
 | `RAG_LLM_TIMEOUT` | `300` | LLM timeout (seconds) |
 | `RAG_MAX_CHAT_HISTORY` | `1` | Max conversation messages in prompt |

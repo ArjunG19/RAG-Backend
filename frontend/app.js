@@ -1,6 +1,6 @@
 /* RAG Knowledge Base — Frontend Application Logic */
 
-const API_BASE = "https://rag-backend-n1as.onrender.com";
+const API_BASE = "http://localhost:8000";
 const messageHistory = [];
 
 /* ===== Initialization ===== */
@@ -234,7 +234,7 @@ async function handleQuery(event) {
     const res = await fetch(`${API_BASE}/query`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question, top_k: 5, chat_history: pastHistory }),
+      body: JSON.stringify({ question, top_k: 10, chat_history: pastHistory }),
     });
     if (!res.ok) {
       const detail = await extractErrorDetail(res);
@@ -311,16 +311,31 @@ function renderSources(sources) {
     label.className = "source-label";
     label.textContent = src.source;
 
-    const badge = document.createElement("span");
-    badge.className = "score-badge";
-    badge.textContent = src.score.toFixed(2);
+    const scores = document.createElement("div");
+    scores.className = "scores";
+
+    const hybridBadge = document.createElement("span");
+    hybridBadge.className = "score-badge hybrid";
+    hybridBadge.textContent = `Hybrid: ${src.score.toFixed(2)}`;
+
+    const vecBadge = document.createElement("span");
+    vecBadge.className = "score-badge vector";
+    vecBadge.textContent = `Vector: ${src.vec_score.toFixed(2)}`;
+
+    const bm25Badge = document.createElement("span");
+    bm25Badge.className = "score-badge bm25";
+    bm25Badge.textContent = `BM25: ${src.bm25_score.toFixed(2)}`;
+
+    scores.appendChild(hybridBadge);
+    scores.appendChild(vecBadge);
+    scores.appendChild(bm25Badge);
 
     const snippet = document.createElement("span");
     snippet.className = "snippet";
     snippet.textContent = src.text_snippet;
 
     card.appendChild(label);
-    card.appendChild(badge);
+    card.appendChild(scores);
     card.appendChild(snippet);
     container.appendChild(card);
   });
