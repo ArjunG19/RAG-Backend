@@ -85,20 +85,11 @@ class RAGChain:
             bm25_store=self.bm25_store,
         )
 
-        if not results:
-            msg = "No relevant documents found."
-            return QueryResponse(
-                answer=msg,
-                sources=[],
-                confidence=0.0,
-                message=msg,
-            )
-
         # 🔥 Filter by relevance threshold before LLM
         relevant_results = [r for r in results if r.score >= self.relevance_threshold]
 
-        if not relevant_results:
-            # Post-retrieval fallback: call LLM with restricted prompt
+        # 🔥 Unified fallback: no results OR all results below threshold
+        if not results or not relevant_results:
             fallback_prompt = FALLBACK_PROMPT_TEMPLATE.format(question=question)
             try:
                 fallback_answer = await asyncio.wait_for(
